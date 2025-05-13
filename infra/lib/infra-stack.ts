@@ -103,5 +103,54 @@ export class InfraStack extends cdk.Stack {
         },
       ],
     });
+
+    /**
+     * task 4.3
+ * Add Lambda function to create a product
+ */
+
+const createProductLambda = new lambda.Function(this, "CreateProductLambda", {
+  runtime: lambda.Runtime.NODEJS_20_X,
+  memorySize: 1024,
+  timeout: cdk.Duration.seconds(5),
+  handler: "create-product.handler",
+  code: lambda.Code.fromAsset(path.join(__dirname, "../lambda/")), 
+  environment: {
+    PRODUCTS_TABLE_NAME:PRODUCTS_TABLE_NAME ,
+  },
+});
+
+  // Grant write access to the Products table for the createProduct Lambda
+  productsTable.grantWriteData(createProductLambda);
+
+  /**
+   * Add API Gateway POST /products resource for creating a product
+   */
+  productsResource.addMethod(
+    "POST",
+    new apigateway.LambdaIntegration(createProductLambda),
+    {
+      methodResponses: [
+        {
+          statusCode: "201", // Created
+          responseParameters: {
+            "method.response.header.Access-Control-Allow-Origin": true,
+          },
+        },
+        {
+          statusCode: "400", // Bad Request
+          responseParameters: {
+            "method.response.header.Access-Control-Allow-Origin": true,
+          },
+        },
+        {
+          statusCode: "500", // Internal Server Error
+          responseParameters: {
+            "method.response.header.Access-Control-Allow-Origin": true,
+          },
+        },
+      ],
+    }
+  );
   }
 }
