@@ -44,6 +44,10 @@ url:https://n5j8y8gjci.execute-api.eu-central-1.amazonaws.com/prod/products
 
 
 
-### task 4.4: Create DynamoDB Tables Using AWS Console
+### task 4.4: Frontend application is integrated with Product Service (/products API) and products from Product Service are represented on Frontend
 
+url:http://mycloudetask4.s3-website.eu-central-1.amazonaws.com/product/892786bd-30ac-4df2-ace0-ba938020361c
 
+![Product List before creation Output](./screenshots/fe-list.png)
+
+![Product List by id after creation Output](./screenshots/fe-view.png)

@@ -25,7 +25,7 @@ export class InfraStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       memorySize: 1024,
       timeout: cdk.Duration.seconds(5),
-      handler: 'get-products-list.handler', // Path to the handler file in the Lambda directory
+      handler: 'get-products-list.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/')),
       environment: {
         PRODUCTS_TABLE_NAME: PRODUCTS_TABLE_NAME,
@@ -40,7 +40,7 @@ export class InfraStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       memorySize: 1024,
       timeout: cdk.Duration.seconds(5),
-      handler: 'get-product-by-id.handler', // Path to the handler file in the Lambda directory
+      handler: 'get-product-by-id.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/')),
       environment: {
         PRODUCTS_TABLE_NAME: PRODUCTS_TABLE_NAME,
@@ -48,7 +48,7 @@ export class InfraStack extends cdk.Stack {
       },
     });
 
-    // Grant read access to the tables for the "List Products" and "Get Product By ID" Lambdas
+    // Grant read access to the tables for the Lambda functions
     productsTable.grantReadData(getProductsListLambda);
     stockTable.grantReadData(getProductsListLambda);
 
@@ -62,9 +62,9 @@ export class InfraStack extends cdk.Stack {
       restApiName: 'Product Service API',
       description: 'API to fetch product data.',
       defaultCorsPreflightOptions: {
-        allowOrigins: ['http://localhost:3000'], // Adjust for your frontend domain
-        allowHeaders: ['Content-Type'], // Allow necessary headers
-        allowMethods: ['OPTIONS', 'GET'], // Restrict allowed methods
+        allowOrigins: ['*'], // Allow all origins or specify your frontend domain
+        allowHeaders: ['Content-Type', 'X-Amz-Date', 'Authorization', 'X-Api-Key'], // Allow necessary headers
+        allowMethods: ['OPTIONS', 'GET', 'POST'], // Allow GET, POST, and OPTIONS methods
       },
     });
 
@@ -78,6 +78,8 @@ export class InfraStack extends cdk.Stack {
           statusCode: '200',
           responseParameters: {
             'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
           },
         },
       ],
@@ -93,64 +95,73 @@ export class InfraStack extends cdk.Stack {
           statusCode: '200',
           responseParameters: {
             'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
           },
         },
         {
           statusCode: '404',
           responseParameters: {
             'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
           },
         },
       ],
     });
 
     /**
-     * task 4.3
- * Add Lambda function to create a product
- */
+     * Lambda function to create a product
+     */
+    const createProductLambda = new lambda.Function(this, "CreateProductLambda", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      memorySize: 1024,
+      timeout: cdk.Duration.seconds(5),
+      handler: "create-product.handler",
+      code: lambda.Code.fromAsset(path.join(__dirname, "../lambda/")), 
+      environment: {
+        PRODUCTS_TABLE_NAME: PRODUCTS_TABLE_NAME,
+      },
+    });
 
-const createProductLambda = new lambda.Function(this, "CreateProductLambda", {
-  runtime: lambda.Runtime.NODEJS_20_X,
-  memorySize: 1024,
-  timeout: cdk.Duration.seconds(5),
-  handler: "create-product.handler",
-  code: lambda.Code.fromAsset(path.join(__dirname, "../lambda/")), 
-  environment: {
-    PRODUCTS_TABLE_NAME:PRODUCTS_TABLE_NAME ,
-  },
-});
+    // Grant write access to the Products table for the createProduct Lambda
+    productsTable.grantWriteData(createProductLambda);
 
-  // Grant write access to the Products table for the createProduct Lambda
-  productsTable.grantWriteData(createProductLambda);
+    /**
+     * Add API Gateway POST /products resource for creating a product
+     */
+    productsResource.addMethod(
+      "POST",
+      new apigateway.LambdaIntegration(createProductLambda),
+      {
+        methodResponses: [
+          {
+            statusCode: "201", // Created
+            responseParameters: {
+              "method.response.header.Access-Control-Allow-Origin": true,
+              "method.response.header.Access-Control-Allow-Methods": true,
+              "method.response.header.Access-Control-Allow-Headers": true,
+            },
+          },
+          {
+            statusCode: "400", // Bad Request
+            responseParameters: {
+              "method.response.header.Access-Control-Allow-Origin": true,
+              "method.response.header.Access-Control-Allow-Methods": true,
+              "method.response.header.Access-Control-Allow-Headers": true,
+            },
+          },
+          {
+            statusCode: "500", // Internal Server Error
+            responseParameters: {
+              "method.response.header.Access-Control-Allow-Origin": true,
+              "method.response.header.Access-Control-Allow-Methods": true,
+              "method.response.header.Access-Control-Allow-Headers": true,
+            },
+          },
+        ],
+      }
+    );
 
-  /**
-   * Add API Gateway POST /products resource for creating a product
-   */
-  productsResource.addMethod(
-    "POST",
-    new apigateway.LambdaIntegration(createProductLambda),
-    {
-      methodResponses: [
-        {
-          statusCode: "201", // Created
-          responseParameters: {
-            "method.response.header.Access-Control-Allow-Origin": true,
-          },
-        },
-        {
-          statusCode: "400", // Bad Request
-          responseParameters: {
-            "method.response.header.Access-Control-Allow-Origin": true,
-          },
-        },
-        {
-          statusCode: "500", // Internal Server Error
-          responseParameters: {
-            "method.response.header.Access-Control-Allow-Origin": true,
-          },
-        },
-      ],
-    }
-  );
   }
 }
