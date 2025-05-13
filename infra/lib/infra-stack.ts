@@ -60,7 +60,7 @@ export class InfraStack extends cdk.Stack {
      */
     const api = new apigateway.RestApi(this, 'ProductServiceApi', {
       restApiName: 'Product Service API',
-      description: 'API to fetch product data.',
+      description: 'API to manage product data.',
       defaultCorsPreflightOptions: {
         allowOrigins: ['*'], // Allow all origins or specify your frontend domain
         allowHeaders: ['Content-Type', 'X-Amz-Date', 'Authorization', 'X-Api-Key'], // Allow necessary headers
@@ -121,11 +121,13 @@ export class InfraStack extends cdk.Stack {
       code: lambda.Code.fromAsset(path.join(__dirname, "../lambda/")), 
       environment: {
         PRODUCTS_TABLE_NAME: PRODUCTS_TABLE_NAME,
+        STOCK_TABLE_NAME: STOCK_TABLE_NAME,
       },
     });
 
-    // Grant write access to the Products table for the createProduct Lambda
+    // Grant write access to the Products and Stock tables for the createProduct Lambda
     productsTable.grantWriteData(createProductLambda);
+    stockTable.grantWriteData(createProductLambda);
 
     /**
      * Add API Gateway POST /products resource for creating a product
