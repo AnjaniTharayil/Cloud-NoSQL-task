@@ -4,6 +4,10 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as path from 'path';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSub from 'aws-cdk-lib/aws-sns-subscriptions';
 
 const PRODUCTS_TABLE_NAME = 'products';
 const STOCK_TABLE_NAME = 'stock';
@@ -15,8 +19,41 @@ export class InfraStack extends cdk.Stack {
     /**
      * Import existing DynamoDB tables
      */
-    const productsTable = dynamodb.Table.fromTableName(this, 'ProductsTable', PRODUCTS_TABLE_NAME);
-    const stockTable = dynamodb.Table.fromTableName(this, 'StockTable', STOCK_TABLE_NAME);
+  // Logic for products table
+  let productsTable: dynamodb.ITable;
+  try {
+    // Reference existing table
+    productsTable = dynamodb.Table.fromTableName(this, 'ProductsTable', PRODUCTS_TABLE_NAME);
+  } catch (error) {
+    console.log(`Table '${PRODUCTS_TABLE_NAME}' does exist. Using existing table.`);
+    // Create table when missing
+    productsTable = new dynamodb.Table(this, 'ProductsTable', {
+      tableName: PRODUCTS_TABLE_NAME,
+      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    });
+  }
+
+  // Logic for stock table
+  let stockTable: dynamodb.ITable;
+  try {
+    // Reference existing table
+    stockTable = dynamodb.Table.fromTableName(this, 'StockTable', STOCK_TABLE_NAME);
+    console.log(`Table '${STOCK_TABLE_NAME}' does exist. Using existing table.`);
+
+  } catch (error) {
+    console.log(`Table '${STOCK_TABLE_NAME}' does not exist. Creating a new table.`);
+    // Create table when missing
+    stockTable = new dynamodb.Table(this, 'StockTable', {
+      tableName: STOCK_TABLE_NAME,
+      partitionKey: { name: 'product_id', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    });
+  }
+
+  // Outputs for debugging
+  new cdk.CfnOutput(this, 'ProductsTableName', { value: productsTable.tableName });
+  new cdk.CfnOutput(this, 'StockTableName', { value: stockTable.tableName });
 
     /**
      * Lambda function to fetch all products from DynamoDB
@@ -113,12 +150,12 @@ export class InfraStack extends cdk.Stack {
     /**
      * Lambda function to create a product
      */
-    const createProductLambda = new lambda.Function(this, "CreateProductLambda", {
+    const createProductLambda = new lambda.Function(this, 'CreateProductLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
       memorySize: 1024,
       timeout: cdk.Duration.seconds(5),
-      handler: "create-product.handler",
-      code: lambda.Code.fromAsset(path.join(__dirname, "../lambda/")), 
+      handler: 'create-product.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/')),
       environment: {
         PRODUCTS_TABLE_NAME: PRODUCTS_TABLE_NAME,
         STOCK_TABLE_NAME: STOCK_TABLE_NAME,
@@ -129,41 +166,99 @@ export class InfraStack extends cdk.Stack {
     productsTable.grantWriteData(createProductLambda);
     stockTable.grantWriteData(createProductLambda);
 
+    // Add API Gateway POST /products resource for creating a product
+    productsResource.addMethod('POST', new apigateway.LambdaIntegration(createProductLambda), {
+      methodResponses: [
+        {
+          statusCode: '201', // Created
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+          },
+        },
+        {
+          statusCode: '400', // Bad Request
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+          },
+        },
+        {
+          statusCode: '500', // Internal Server Error
+          responseParameters: {
+            'method.response.header.Access-Control-Allow-Origin': true,
+            'method.response.header.Access-Control-Allow-Methods': true,
+            'method.response.header.Access-Control-Allow-Headers': true,
+          },
+        },
+      ],
+    });
+
     /**
-     * Add API Gateway POST /products resource for creating a product
+     * Create an SQS Queue for Catalog Items
      */
-    productsResource.addMethod(
-      "POST",
-      new apigateway.LambdaIntegration(createProductLambda),
-      {
-        methodResponses: [
-          {
-            statusCode: "201", // Created
-            responseParameters: {
-              "method.response.header.Access-Control-Allow-Origin": true,
-              "method.response.header.Access-Control-Allow-Methods": true,
-              "method.response.header.Access-Control-Allow-Headers": true,
-            },
-          },
-          {
-            statusCode: "400", // Bad Request
-            responseParameters: {
-              "method.response.header.Access-Control-Allow-Origin": true,
-              "method.response.header.Access-Control-Allow-Methods": true,
-              "method.response.header.Access-Control-Allow-Headers": true,
-            },
-          },
-          {
-            statusCode: "500", // Internal Server Error
-            responseParameters: {
-              "method.response.header.Access-Control-Allow-Origin": true,
-              "method.response.header.Access-Control-Allow-Methods": true,
-              "method.response.header.Access-Control-Allow-Headers": true,
-            },
-          },
-        ],
-      }
+    const catalogItemsQueue = new sqs.Queue(this, 'CatalogItemsQueue', {
+      visibilityTimeout: cdk.Duration.seconds(30),
+    });
+
+    /**
+     * Create a Lambda function for batch processing of products
+     */
+    const catalogBatchProcessLambda = new lambda.Function(this, 'CatalogBatchProcessLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      memorySize: 1024,
+      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/')),
+      handler: 'catalog-batch-process.handler',
+      environment: {
+        PRODUCTS_TABLE_NAME: PRODUCTS_TABLE_NAME,
+        STOCK_TABLE_NAME: STOCK_TABLE_NAME,
+      },
+    });
+
+    // Grant write access to the Products and Stock tables for batch Lambda
+    productsTable.grantWriteData(catalogBatchProcessLambda);
+    stockTable.grantWriteData(catalogBatchProcessLambda);
+
+    // Specify SQS as the event source for the Lambda with batch size of 5
+    catalogBatchProcessLambda.addEventSource(
+      new lambdaEventSources.SqsEventSource(catalogItemsQueue, {
+        batchSize: 5,
+      })
     );
 
+    /**
+     * Define an SNS topic to notify about created products
+     */
+    const createProductTopic = new sns.Topic(this, 'CreateProductTopic', {
+      displayName: 'Product Creation Notifications',
+    });
+
+    // Add an email subscription to the SNS topic
+    createProductTopic.addSubscription(
+      new snsSub.EmailSubscription('anjanitharayil@gmail.com') // Replace with your email
+    );
+
+    /**
+     * Grant Lambda permission to publish to the SNS topic
+     */
+    createProductTopic.grantPublish(catalogBatchProcessLambda);
+
+    // Add the SNS Topic ARN as an environment variable in Lambda
+    catalogBatchProcessLambda.addEnvironment('SNS_TOPIC_ARN', createProductTopic.topicArn);
+
+    /**
+     * Outputs for debugging and resource information
+     */
+    new cdk.CfnOutput(this, 'CatalogItemsQueueUrl', {
+      value: catalogItemsQueue.queueUrl,
+      description: 'The URL of the Catalog Items SQS Queue',
+    });
+
+    new cdk.CfnOutput(this, 'CreateProductTopicArn', {
+      value: createProductTopic.topicArn,
+      description: 'The ARN of the Create Product SNS Topic',
+    });
   }
 }
